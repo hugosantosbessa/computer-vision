@@ -1,49 +1,95 @@
-
 import sys
-import cv2
+import cv2 as cv
 import numpy as np
-
-# Carregar uma imagem
-image = cv2.imread('museum1.jpg', cv2.IMREAD_GRAYSCALE)
-
-# Verificar se a imagem foi carregada corretamente
-if image is None:
-    print("Erro ao carregar a imagem!")
-    sys.exit(1)
-
-##############################
-# SIFT
-##############################
-# Criar o objeto SIFT
-sift = cv2.SIFT_create()
-
-# Detectar key points e calcular descritores
-keypoints_sift, descriptors_sift = sift.detectAndCompute(image, None)
-
-# Desenhar key points na imagem
-img_sift = cv2.drawKeypoints(image, keypoints_sift, None, flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+import matplotlib.pyplot as plt
 
 
-##############################
-# ORB
-##############################
-# Criar o objeto ORB
-orb = cv2.ORB_create()
+def match_features(im1, im2, method='surf'):
+    """
+    Encontra e desenha correspondências entre duas imagens usando SURF ou ORB.
 
-# Detectar key points
-keypoints_orb = orb.detect(image, None)
+    :param im1: Primeira imagem em escala de cinza.
+    :param im2: Segunda imagem em escala de cinza.
+    :param method: Método de detecção ('surf' ou 'orb').
+    :return: Imagem com correspondências desenhadas.
+    """
+    if method == 'surf':
+        min_hessian = 400
+        detector = cv.xfeatures2d_SURF.create(min_hessian)
+        norm_type = cv.NORM_L2
+        matcher = cv.BFMatcher(norm_type)
+        knn_match = True
+        distance_ratio = 0.75
+    elif method == 'orb':
+        detector = cv.ORB_create()
+        norm_type = cv.NORM_HAMMING
+        matcher = cv.BFMatcher(norm_type, crossCheck=True)
+        knn_match = False
+        distance_ratio = 1.0
 
-# Calcular descritores ORB
-keypoints_orb, descriptors_orb = orb.compute(image, keypoints_orb)
+    # Detecta keypoints e descritores
+    kp1, des1 = detector.detectAndCompute(im1, None)
+    kp2, des2 = detector.detectAndCompute(im2, None)
 
-# Desenhar key points na imagem
-img_orb = cv2.drawKeypoints(image, keypoints_orb, None, color=(0, 255, 0), flags=0)
+    # Verifica se os descritores foram encontrados
+    if des1 is None or des2 is None:
+        print(f"Sem correspondências encontradas com o método {method.upper()}.")
+        return np.zeros_like(im1)  # Retorna imagem em preto caso não haja correspondências
+
+    # Encontra correspondências
+    matches = matcher.knnMatch(des1, des2, k=2) if knn_match else matcher.match(des1, des2)
+
+    # Filtra correspondências com base na distância
+    good_matches = []
+    if knn_match:
+        for m, n in matches:
+            if m.distance < distance_ratio * n.distance:
+                good_matches.append([m])
+    else:
+        good_matches = sorted(matches, key=lambda x: x.distance)[:15]
+
+    # Desenha as correspondências
+    img_matches = cv.drawMatchesKnn(im1, kp1, im2, kp2, good_matches, None,
+                                    flags=cv.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS) if knn_match else \
+        cv.drawMatches(im1, kp1, im2, kp2, good_matches, None,
+                       flags=cv.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+
+    print(f"({method.upper()}) Número de correspondências boas: {len(good_matches)}")
+    return img_matches
 
 
-# Mostrar as imagens
-cv2.imshow('SIFT', img_sift)
-cv2.imshow('ORB', img_orb)
+def main(img1_path, img2_path):
+    """
+    Carrega as imagens, aplica a correspondência de características e exibe os resultados.
 
-# Esperar para fechar as janelas
-cv2.waitKey(0)
-cv2.destroyAllWindows()
+    :param img1_path: Caminho para a primeira imagem.
+    :param img2_path: Caminho para a segunda imagem.
+    """
+    # Carrega as imagens em escala de cinza
+    img1 = cv.imread(img1_path, cv.IMREAD_GRAYSCALE)
+    img2 = cv.imread(img2_path, cv.IMREAD_GRAYSCALE)
+
+    if img1 is None or img2 is None:
+        print("Erro ao carregar as imagens. Verifique os caminhos fornecidos.")
+        return
+
+    # Encontra e desenha correspondências usando SURF e ORB
+    img_match_surf = match_features(img1, img2, method='surf')
+    img_match_orb = match_features(img1, img2, method='orb')
+
+    # Exibe as imagens correspondentes lado a lado
+    plt.figure(figsize=(20, 10))
+    plt.subplot(121)
+    plt.imshow(img_match_surf)
+    plt.title('SURF')
+    plt.subplot(122)
+    plt.imshow(img_match_orb)
+    plt.title('ORB')
+    plt.show()
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 3:
+        print("Uso: python script.py <caminho_imagem1> <caminho_imagem2>")
+    else:
+        main(sys.argv[1], sys.argv[2])
